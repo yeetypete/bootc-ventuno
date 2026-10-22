@@ -14,10 +14,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}${{ (github.ref == 'refs/heads/main') && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
-env:
-  REPOSITORY: docker.io/yeetypete/bootc-ventuno
-  TAG: "26.10"
-
 jobs:
   pre-commit:
     name: pre-commit
@@ -99,25 +95,6 @@ jobs:
           VERSION: ${{ steps.tags.outputs.version }}
         run: just push "$SHORT_SHA" "$VERSION"
 
-      # Install from the registry, so the disk image boots the pushed digest.
-      - name: Create disk image
-        env:
-          SHORT_SHA: ${{ steps.tags.outputs.short_sha }}
-        run: |
-          just disk "docker://$REPOSITORY:$TAG-$SHORT_SHA"
-          zstd -T0 --rm -o build/bootc-ventuno.img.zst build/bootc-ventuno.img
-          (cd build && sha256sum bootc-ventuno.img.zst > bootc-ventuno.img.zst.sha256)
-
-      - name: Upload disk image artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: disk-image
-          path: |
-            build/*.img.zst
-            build/*.img.zst.sha256
-          if-no-files-found: error
-          retention-days: 5
-
   release:
     name: release
     if: github.ref_type == 'tag'
@@ -126,22 +103,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          persist-credentials: false
-
-      - name: Download disk image artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: disk-image
-          path: disk-image
-
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
-            --generate-notes \
-            disk-image/*
+            --generate-notes
