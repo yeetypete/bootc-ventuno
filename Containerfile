@@ -153,5 +153,6 @@ ARG REVISION=
 LABEL org.opencontainers.image.source="https://github.com/yeetypete/bootc-ventuno" \
     org.opencontainers.image.version="${VERSION}" \
     org.opencontainers.image.revision="${REVISION}" \
+    org.opencontainers.image.licenses="MIT" \
     org.opencontainers.image.title="bootc-ventuno" \
     org.opencontainers.image.description="bootc image for the Arduino VENTUNO Q on Ubuntu 26.10."
