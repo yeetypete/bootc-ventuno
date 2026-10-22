@@ -9,10 +9,14 @@ reference := repository + ":" + tag
 rootfs := "localhost/bootc-ventuno-rootfs"
 # chunkah is used to split the rootfs into a layer per group of packages.
 chunkah_image := "quay.io/coreos/chunkah:v0.7.1@sha256:71e593421c5de7dcc7c8c5c50e98d3bac572055a76f399f61a491d123c20a523"
+oci_archive := "image.oci"
 # Registry that caches the rootfs build's layers, if set.
 cache := env("CACHE", "")
 cache_args := if cache == "" { "" } else { "--cache-from=" + cache + " --cache-to=" + cache }
 
+disk_image := "build/bootc-ventuno.img"
+disk_size := "8G"
+qcomflash_dir := "build/bootc-ventuno.qcomflash"
 
 # List available recipes.
 default:
@@ -34,6 +38,12 @@ build *args:
         --build-context chunked=container-image://"$(podman pull --quiet oci:chunked)" \
         --tag {{ reference }} {{ args }} .
 
+# Save the image as an OCI archive for `disk` and `qcomflash`.
+save:
+    # bootc runs as root and cannot read the rootless podman store.
+    rm -f {{ oci_archive }}
+    podman save --quiet --format oci-archive --output {{ oci_archive }} {{ reference }}
+
 # Push the image tagged <tag>-<short_sha>, and for a release also <tag>-<version> and <tag>.
 push short_sha version="":
     #!/usr/bin/env bash
@@ -50,6 +60,38 @@ push short_sha version="":
             {{ reference }} "{{ repository }}:$t"
     done
 
-# Remove the chunkah output.
+# Install an image into a raw disk image via bootc install to-disk.
+disk imgref=("oci-archive:" + oci_archive):
+    mkdir -p build
+    rm -f {{ disk_image }}
+    truncate -s {{ disk_size }} {{ disk_image }}
+    sudo podman run \
+        --rm --privileged --pid=host \
+        --security-opt label=disable \
+        -v /dev:/dev \
+        -v "$PWD:/output" \
+        -w /output \
+        {{ imgref }} \
+        bootc install to-disk \
+            --source-imgref {{ imgref }} \
+            --target-imgref {{ reference }} \
+            --composefs-backend \
+            --bootloader systemd \
+            --filesystem ext4 \
+            --via-loopback /output/{{ disk_image }}
+
+# Assemble the qcomflash directory qdl flashes from the disk image and the image's device trees.
+qcomflash imgref=("oci-archive:" + oci_archive):
+    rm -rf build/dtbs
+    mkdir -p build/dtbs
+    podman run --rm --entrypoint sh {{ imgref }} \
+        -c 'cd /usr/lib/firmware/*/device-tree && tar -c qcom' | tar -x -C build/dtbs
+    scripts/qcomflash.sh {{ disk_image }} build/dtbs/qcom {{ qcomflash_dir }}
+
+# Flash a board in EDL mode. Erases the eMMC.
+flash:
+    cd {{ qcomflash_dir }} && qdl --storage emmc prog_firehose_ddr.elf rawprogram*.xml patch*.xml
+
+# Remove the build output, the OCI archive and the chunkah output.
 clean:
-    rm -rf chunked
+    rm -rf build {{ oci_archive }} chunked
