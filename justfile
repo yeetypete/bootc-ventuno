@@ -80,6 +80,10 @@ disk imgref=("oci-archive:" + oci_archive):
             --filesystem ext4 \
             --via-loopback /output/{{ disk_image }}
 
+# Download the newest CI disk image built from a branch, by default the current one.
+download branch=`git branch --show-current`:
+    scripts/download.sh {{ disk_image }} {{ branch }}
+
 # Assemble the qcomflash directory qdl flashes from the disk image and the image's device trees.
 qcomflash imgref=("oci-archive:" + oci_archive):
     rm -rf build/dtbs
