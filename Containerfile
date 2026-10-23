@@ -135,6 +135,34 @@ RUN bootc container split-kernel-and-rootfs --output /kernel && \
 RUN bootc container lint --fatal-warnings
 
 
+FROM ${UBUNTU_IMAGE} AS dtb
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install --no-install-recommends -y device-tree-compiler
+
+# TODO: Drop once the kernel's VENTUNO Q device tree gives the SGMII SerDes its
+# 0.9 V supply, which Ethernet needs. The kernel driver and the other Monaco
+# boards already have the fix, see
+# https://lore.kernel.org/r/20260804-b4-sgmiieth_serdes_regulator-v2-0-c4bc688177dd@oss.qualcomm.com.
+RUN --mount=type=bind,from=finalized,source=/usr/lib/firmware,target=/firmware \
+    dtb=/dtb/monaco-arduino-monza.dtb && \
+    mkdir /dtb && \
+    cp /firmware/*/device-tree/qcom/monaco-arduino-monza.dtb "${dtb}" && \
+    l4a="$(fdtget -t u "${dtb}" /soc@0/rsc@18200000/regulators-0/ldo4 phandle)" && \
+    l5a="$(fdtget -t u "${dtb}" /soc@0/rsc@18200000/regulators-0/ldo5 phandle)" && \
+    fdtput -t u "${dtb}" /soc@0/phy@8909000 vdda-0p9-supply "${l4a}" && \
+    fdtput -t u "${dtb}" /soc@0/phy@8909000 vdda-1p2-supply "${l5a}" && \
+    fdtput -d "${dtb}" /soc@0/phy@8909000 phy-supply
+
+# The firmware's EFI_DT_FIXUP_PROTOCOL ignores the buffer size systemd-stub
+# passes and grows the device tree in place, see
+# https://github.com/U-Boot-EFI/EFI_DT_FIXUP_PROTOCOL. Without free space in
+# the blob it overwrites whatever follows, which can be the kernel command line.
+RUN dtc -I dtb -O dtb -p 65536 \
+    -o /dtb/monaco-arduino-monza.dtb /dtb/monaco-arduino-monza.dtb
+
+
 # `just build` passes rootfs rechunked by chunkah as the chunked build context.
 # Seal the UKI from chunked so that its composefs digest covers the mtimes
 # chunkah rewrites.
@@ -143,11 +171,12 @@ FROM chunked AS uki
 # Replaces the firmware's device tree, which targets Canonical's linux-qcom kernel.
 RUN --mount=type=bind,from=chunked,target=/target \
     --mount=type=bind,from=finalized,source=/usr/lib/modules,target=/kernel \
+    --mount=type=bind,from=dtb,source=/dtb,target=/dtb \
     kver="$(basename "$(dirname /kernel/*/vmlinuz)")" && \
     mkdir /uki && \
     bootc container ukify --rootfs /target --kernel-dir "/kernel/${kver}" \
     -- \
-    --devicetree "/target/usr/lib/firmware/${kver}/device-tree/qcom/monaco-arduino-monza.dtb" \
+    --devicetree /dtb/monaco-arduino-monza.dtb \
     --output "/uki/${kver}.efi"
 
 
