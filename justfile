@@ -38,7 +38,7 @@ build *args:
         --build-context chunked=container-image://"$(podman pull --quiet oci:chunked)" \
         --tag {{ reference }} {{ args }} .
 
-# Save the image as an OCI archive for `disk` and `qcomflash`.
+# Save the image as an OCI archive for `disk`.
 save:
     # bootc runs as root and cannot read the rootless podman store.
     rm -f {{ oci_archive }}
@@ -84,13 +84,9 @@ disk imgref=("oci-archive:" + oci_archive):
 download branch=`git branch --show-current`:
     scripts/download.sh {{ disk_image }} {{ branch }}
 
-# Assemble the qcomflash directory qdl flashes from the disk image and the image's device trees.
-qcomflash imgref=("oci-archive:" + oci_archive):
-    rm -rf build/dtbs
-    mkdir -p build/dtbs
-    podman run --rm --entrypoint sh {{ imgref }} \
-        -c 'cd /usr/lib/firmware/*/device-tree && tar -c qcom' | tar -x -C build/dtbs
-    scripts/qcomflash.sh {{ disk_image }} build/dtbs/qcom {{ qcomflash_dir }}
+# Assemble the qcomflash directory qdl flashes from the disk image.
+qcomflash:
+    scripts/qcomflash.sh {{ disk_image }} {{ qcomflash_dir }}
 
 # Flash a board in EDL mode. Erases the eMMC.
 flash:

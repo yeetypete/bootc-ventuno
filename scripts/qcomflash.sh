@@ -5,13 +5,12 @@
 #
 # See https://dragonwingdocs.qualcomm.com/Key-Documents/Flash-Guide/flash-with-qdl
 #
-# Usage: qcomflash.sh DISK_IMAGE DTB_DIR OUTPUT_DIR
+# Usage: qcomflash.sh DISK_IMAGE OUTPUT_DIR
 set -euo pipefail
 shopt -s inherit_errexit
 
 disk=$(realpath "$1")
-dtb_dir=$(realpath "$2")
-out=$3
+out=$2
 
 cache=$(realpath "$(dirname "$0")/..")/build/cache
 
@@ -65,9 +64,6 @@ unzip -q -j -o "$firmware_immutable" -d "$out"
 cdt=$(fetch "$cdt_url" "$cdt_sha256")
 unzip -q -p "$cdt" cdt_qcs8275-Monza.bin >"$out/cdt.bin"
 
-dtb_metadata=$(fetch_repo qcom-dtb-metadata "$dtb_metadata_rev" "$dtb_metadata_sha256")
-"$dtb_metadata/build-dtb-image.sh" --dtb-src "$dtb_dir" --soc qcs8275 --prune --out "$out/dtb.bin" >/dev/null
-
 # The ESP and root, named as partitions.conf expects.
 partx --show --noheadings --output NAME,START,SECTORS "$disk" |
     while read -r name start sectors; do
@@ -80,6 +76,16 @@ partx --show --noheadings --output NAME,START,SECTORS "$disk" |
             iflag=skip_bytes,count_bytes \
             skip=$((start * 512)) count=$((sectors * 512))
     done
+
+# Give the firmware the device tree the UKI boots with.
+dtb_dir=$(mktemp -d)
+trap 'rm -rf "$dtb_dir"' EXIT
+mcopy -i "$out/efi.bin" '::/EFI/Linux/bootc/*.efi' "$dtb_dir/uki.efi"
+llvm-objcopy --dump-section .dtb="$dtb_dir/monaco-arduino-monza.dtb" "$dtb_dir/uki.efi" /dev/null
+rm "$dtb_dir/uki.efi"
+
+dtb_metadata=$(fetch_repo qcom-dtb-metadata "$dtb_metadata_rev" "$dtb_metadata_sha256")
+"$dtb_metadata/build-dtb-image.sh" --dtb-src "$dtb_dir" --soc qcs8275 --prune --out "$out/dtb.bin" >/dev/null
 
 ptool=$(fetch_repo qcom-ptool "$ptool_rev" "$ptool_sha256")
 # bootc gives the composefs backend a 2 GiB ESP.
