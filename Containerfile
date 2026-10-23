@@ -66,6 +66,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install --no-install-recommends -y systemd && \
     systemd-sysusers
 
+# TODO: Install linux-image-generic. Its signed kernel is wrapped in stubble
+# (Ubuntu's EFI stub that loads device trees), which systemd-stub refuses to
+# boot from a UKI. Add support in bootc-imagectl for unwrapping the kernel.
+ARG KERNEL_RELEASE=7.3.0-9-generic
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install --no-install-recommends -y \
@@ -75,7 +79,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     dracut \
     fdisk \
     libnss-systemd \
-    linux-image-generic \
+    linux-firmware-qualcomm-graphics \
+    linux-firmware-qualcomm-misc \
+    linux-firmware-qualcomm-wireless \
+    linux-image-unsigned-${KERNEL_RELEASE} \
     openssh-server \
     ostree \
     podman \
