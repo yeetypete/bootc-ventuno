@@ -76,8 +76,6 @@ disk imgref=("oci-archive:" + oci_archive):
             --source-imgref {{ imgref }} \
             --target-imgref {{ reference }} \
             --composefs-backend \
-            --bootloader systemd \
-            --filesystem ext4 \
             --via-loopback /output/{{ disk_image }}
 
 # Download the newest CI disk image built from a branch, by default the current one.

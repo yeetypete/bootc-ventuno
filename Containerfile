@@ -73,11 +73,15 @@ ARG KERNEL_RELEASE=7.3.0-9-generic
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install --no-install-recommends -y \
+    acl \
     ca-certificates \
     dbus \
     dosfstools \
     dracut \
+    fastrpc-support \
     fdisk \
+    hexagon-dsp-binaries-arduino-monza \
+    libfastrpc1 \
     libnss-systemd \
     linux-firmware-qualcomm-graphics \
     linux-firmware-qualcomm-misc \
@@ -101,6 +105,9 @@ COPY --from=bootc-builder /out/usr/ /usr/
 COPY --from=system-files /system_files/ /
 
 RUN systemctl enable systemd-growfs@sysroot.service
+
+# apt cannot update the read-only /usr.
+RUN systemctl disable apt-daily-upgrade.timer apt-daily.timer
 
 # A transient /etc requires setting systemd-firstboot's settings in the image.
 RUN systemd-firstboot --locale=C.UTF-8 --timezone=UTC
