@@ -90,7 +90,7 @@ qcomflash:
 flash:
     cd {{ qcomflash_dir }} && qdl --storage emmc prog_firehose_ddr.elf rawprogram*.xml patch*.xml
 
-# Connect to the VENTUNO Q's serial console over USB.
+# Connect to a VENTUNO Q's serial console over USB.
 connect:
     scripts/connect.sh
 

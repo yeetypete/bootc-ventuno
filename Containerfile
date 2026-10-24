@@ -66,8 +66,8 @@ WORKDIR /bootc
 RUN git clone --depth 1 --branch "${BOOTC_VERSION}" https://github.com/bootc-dev/bootc.git .
 
 # The rhel9 feature selects composefs-rs loopback EROFS mounts, which work on
-# the 6.8 kernel (file-backed EROFS needs Linux 6.12+). Ubuntu does not use
-# SELinux, so leave out the default selinux feature.
+# the VENTUNO Q's 6.8 kernel (file-backed EROFS needs Linux 6.12+). Ubuntu does
+# not use SELinux, so leave out the default selinux feature.
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,target=/bootc/target,sharing=locked \
     CARGO_PROFILE_RELEASE_DEBUG=false CARGO_PROFILE_RELEASE_STRIP=true \
@@ -109,10 +109,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install --no-install-recommends -y \
     acl \
+    avahi-daemon \
     dbus \
     dosfstools \
     dracut \
     fdisk \
+    libnss-mdns \
     libnss-systemd \
     linux-firmware \
     linux-firmware-dragonwing \
@@ -140,14 +142,14 @@ COPY --from=system-files /system_files/ /
 # start, so point it at /run, which tmpfiles.d creates.
 RUN ln -s /run/dsp /usr/lib/dsp
 
-RUN systemctl enable systemd-growfs@sysroot.service
+RUN cp /usr/share/systemd/tmp.mount /usr/lib/systemd/system/
 
-# Ubuntu 24.04 keeps /tmp on the root filesystem.
-RUN cp /usr/share/systemd/tmp.mount /usr/lib/systemd/system/ && \
-    systemctl enable tmp.mount
-
-# apt cannot update the read-only /usr.
-RUN systemctl disable apt-daily-upgrade.timer apt-daily.timer
+RUN systemctl enable \
+    systemd-growfs@sysroot.service \
+    tmp.mount && \
+    systemctl disable \
+    apt-daily-upgrade.timer \
+    apt-daily.timer
 
 # A transient /etc requires setting systemd-firstboot's settings in the image.
 RUN systemd-firstboot --locale=C.UTF-8 --timezone=UTC
@@ -155,8 +157,10 @@ RUN systemd-firstboot --locale=C.UTF-8 --timezone=UTC
 # Create home directories on first login.
 RUN pam-auth-update --enable mkhomedir
 
-# The base image's ubuntu user, with password ubuntu.
-RUN echo 'ubuntu:ubuntu' | chpasswd
+# The base image's ubuntu user, with password ubuntu and passwordless sudo.
+RUN echo 'ubuntu:ubuntu' | chpasswd && \
+    echo "ubuntu ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/ubuntu && \
+    chmod 440 /etc/sudoers.d/ubuntu
 
 LABEL containers.bootc=1
 CMD ["/sbin/init"]
@@ -187,7 +191,8 @@ RUN bootc container lint --fatal-warnings
 # chunkah rewrites.
 FROM chunked AS uki
 
-# The UKI carries no device tree. The firmware loads it from the dtb partition.
+# The kernel and initramfs come from finalized, the systemd-stub from chunked.
+# The UKI carries no devicetree. The firmware loads it from the dtb partition.
 RUN --mount=type=bind,from=chunked,target=/target \
     --mount=type=bind,from=finalized,source=/usr/lib/modules,target=/kernel \
     kver="$(basename "$(dirname /kernel/*/vmlinuz)")" && \
