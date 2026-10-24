@@ -69,10 +69,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # TODO: Install linux-image-generic. Its signed kernel is wrapped in stubble
 # (Ubuntu's EFI stub that loads device trees), which systemd-stub refuses to
 # boot from a UKI. Add support in bootc-imagectl for unwrapping the kernel.
+#
+# TODO: Drop --force-overwrite once firmware-qcom-dsp declares that it replaces
+# the DSP firmware files it shares with linux-firmware-qualcomm-misc.
 ARG KERNEL_RELEASE=7.3.0-9-generic
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install --no-install-recommends -y \
+    -o Dpkg::Options::=--force-overwrite \
     acl \
     ca-certificates \
     dbus \
