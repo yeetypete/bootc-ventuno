@@ -1,0 +1,2 @@
+# From Arduino's /etc/default/grub.d/99-dragonwing-disable-lvds.cfg.
+kargs = ["video=LVDS-1:d"]

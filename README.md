@@ -2,7 +2,7 @@
 
 A [bootc](https://bootc-dev.github.io/bootc/) image for the
 [Arduino VENTUNO Q](https://docs.arduino.cc/hardware/ventuno-q/), running
-Ubuntu 26.10 with its stock kernel.
+Ubuntu 24.04 with the kernel, firmware and device tree of Arduino's own image.
 
 > [!WARNING]
 > This repository is intended as a **reference example** of running `bootc` on
@@ -14,7 +14,8 @@ Ubuntu 26.10 with its stock kernel.
 
 - `bootc` with the [composefs backend](https://bootc.dev/bootc/bootc-experimental-composefs.7.html)
   enabled for image storage and deployment, and a read-only `/usr`.
-- Ubuntu 26.10 with the stock `linux-generic` kernel.
+- Ubuntu 24.04 with Canonical's `linux-qcom` kernel and
+  [Qualcomm IoT PPA](https://launchpad.net/~ubuntu-qcom-iot/+archive/ubuntu/qcom-ppa).
 - A sealed [UKI](https://bootc.dev/bootc/bootc-experimental-composefs.7.html#building-sealed-images)
   booted by `systemd-boot`, built and finalized with
   [`bootc-imagectl`](https://github.com/yeetypete/bootc-imagectl).

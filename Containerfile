@@ -2,7 +2,7 @@
 # DL3006: chunked is a build context, not an image to tag.
 # DL4006: podman builds OCI images, which ignore SHELL, so RUN keeps /bin/sh.
 
-ARG UBUNTU_IMAGE=docker.io/library/ubuntu:26.10@sha256:93e29beff5257b2cdf1c024d831f6d2997e53655a653ff76a811fc9e6564a719
+ARG UBUNTU_IMAGE=docker.io/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
 ARG RUST_IMAGE=docker.io/library/rust:1.99-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6
 ARG BOOTC_IMAGECTL_REV=a2ef68fc68e8d272f16e502abd432f071ce350d5
 
@@ -15,31 +15,64 @@ RUN chmod -R go-w /system_files
 
 FROM ${UBUNTU_IMAGE} AS bootc-builder
 
+ENV PATH=/usr/lib/rust-1.91/bin:$PATH
+
 ARG BOOTC_VERSION=v1.17.1
-ENV DEBIAN_FRONTEND=noninteractive
+ARG OSTREE_VERSION=v2026.4
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install --no-install-recommends -y \
+    autoconf \
+    automake \
+    bison \
     build-essential \
     ca-certificates \
-    cargo \
+    cargo-1.91 \
     git \
     go-md2man \
-    libostree-dev \
+    libext2fs-dev \
+    libglib2.0-dev \
+    liblzma-dev \
     libssl-dev \
+    libsystemd-dev \
+    libtool \
     libzstd-dev \
-    pkg-config \
-    rustc
+    pkg-config
+
+# bootc requires ostree >= 2025.3 but Ubuntu 24.04 ships 2024.5, so build from source.
+WORKDIR /ostree
+RUN git clone \
+    --depth 1 \
+    --branch ${OSTREE_VERSION} \
+    --recurse-submodules \
+    --shallow-submodules \
+    --jobs 8 \
+    https://github.com/ostreedev/ostree.git . && \
+    env NOCONFIGURE=1 ./autogen.sh && \
+    ./configure \
+    --prefix=/usr \
+    --libdir=/usr/lib \
+    --sysconfdir=/etc \
+    --without-gpgme \
+    --with-libsystemd \
+    --disable-rofiles-fuse && \
+    make -j"$(nproc)" && \
+    make install && \
+    make install-libLTLIBRARIES install-binPROGRAMS DESTDIR=/out && \
+    ldconfig
 
 WORKDIR /bootc
 RUN git clone --depth 1 --branch "${BOOTC_VERSION}" https://github.com/bootc-dev/bootc.git .
 
+# The rhel9 feature selects composefs-rs loopback EROFS mounts, which work on
+# the 6.8 kernel (file-backed EROFS needs Linux 6.12+). Ubuntu does not use
+# SELinux, so leave out the default selinux feature.
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,target=/bootc/target,sharing=locked \
     CARGO_PROFILE_RELEASE_DEBUG=false CARGO_PROFILE_RELEASE_STRIP=true \
     make bin install DESTDIR=/out \
-    CARGO_OPTIONS='--no-default-features --features install-to-disk'
+    CARGO_OPTIONS='--no-default-features --features "install-to-disk rhel9"'
 
 
 FROM ${RUST_IMAGE} AS bootc-imagectl
@@ -63,39 +96,32 @@ ENV INITRD=No
 COPY --from=system-files /system_files/usr/lib/sysusers.d/ /usr/lib/sysusers.d/
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install --no-install-recommends -y systemd && \
+    apt-get update && apt-get install --no-install-recommends -y \
+    ca-certificates \
+    systemd && \
     systemd-sysusers
 
-# TODO: Install linux-image-generic. Its signed kernel is wrapped in stubble
-# (Ubuntu's EFI stub that loads device trees), which systemd-stub refuses to
-# boot from a UKI. Add support in bootc-imagectl for unwrapping the kernel.
-#
-# TODO: Drop --force-overwrite once firmware-qcom-dsp declares that it replaces
-# the DSP firmware files it shares with linux-firmware-qualcomm-misc.
-ARG KERNEL_RELEASE=7.3.0-9-generic
+COPY --from=system-files /system_files/etc/apt/sources.list.d/ /etc/apt/sources.list.d/
+
+# The kernel Arduino's image ships, which built the device tree in firmware/dtb.bin.
+ARG KERNEL_RELEASE=6.8.0-1080-qcom
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install --no-install-recommends -y \
-    -o Dpkg::Options::=--force-overwrite \
     acl \
-    ca-certificates \
     dbus \
     dosfstools \
     dracut \
-    fastrpc-support \
     fdisk \
-    hexagon-dsp-binaries-arduino-monza \
-    libfastrpc1 \
     libnss-systemd \
-    linux-firmware-qualcomm-graphics \
-    linux-firmware-qualcomm-misc \
-    linux-firmware-qualcomm-wireless \
-    linux-image-unsigned-${KERNEL_RELEASE} \
+    linux-firmware \
+    linux-firmware-dragonwing \
+    linux-image-${KERNEL_RELEASE} \
     openssh-server \
-    ostree \
     podman \
+    qcom-fastrpc1 \
     skopeo \
-    sudo-rs \
+    sudo \
     systemd-boot \
     systemd-resolved \
     systemd-sysv \
@@ -104,11 +130,21 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     udev \
     zstd
 
+# bootc links against the ostree built alongside it.
 COPY --from=bootc-builder /out/usr/ /usr/
+RUN ldconfig
 
 COPY --from=system-files /system_files/ /
 
+# The *rpcd services link the SoC's DSP libraries into /usr/lib/dsp when they
+# start, so point it at /run, which tmpfiles.d creates.
+RUN ln -s /run/dsp /usr/lib/dsp
+
 RUN systemctl enable systemd-growfs@sysroot.service
+
+# Ubuntu 24.04 keeps /tmp on the root filesystem.
+RUN cp /usr/share/systemd/tmp.mount /usr/lib/systemd/system/ && \
+    systemctl enable tmp.mount
 
 # apt cannot update the read-only /usr.
 RUN systemctl disable apt-daily-upgrade.timer apt-daily.timer
@@ -146,49 +182,18 @@ RUN bootc container split-kernel-and-rootfs --output /kernel && \
 RUN bootc container lint --fatal-warnings
 
 
-FROM ${UBUNTU_IMAGE} AS dtb
-
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install --no-install-recommends -y device-tree-compiler
-
-# TODO: Drop once the kernel's VENTUNO Q device tree gives the SGMII SerDes its
-# 0.9 V supply, which Ethernet needs. The kernel driver and the other Monaco
-# boards already have the fix, see
-# https://lore.kernel.org/r/20260804-b4-sgmiieth_serdes_regulator-v2-0-c4bc688177dd@oss.qualcomm.com.
-RUN --mount=type=bind,from=finalized,source=/usr/lib/firmware,target=/firmware \
-    dtb=/dtb/monaco-arduino-monza.dtb && \
-    mkdir /dtb && \
-    cp /firmware/*/device-tree/qcom/monaco-arduino-monza.dtb "${dtb}" && \
-    l4a="$(fdtget -t u "${dtb}" /soc@0/rsc@18200000/regulators-0/ldo4 phandle)" && \
-    l5a="$(fdtget -t u "${dtb}" /soc@0/rsc@18200000/regulators-0/ldo5 phandle)" && \
-    fdtput -t u "${dtb}" /soc@0/phy@8909000 vdda-0p9-supply "${l4a}" && \
-    fdtput -t u "${dtb}" /soc@0/phy@8909000 vdda-1p2-supply "${l5a}" && \
-    fdtput -d "${dtb}" /soc@0/phy@8909000 phy-supply
-
-# The firmware's EFI_DT_FIXUP_PROTOCOL ignores the buffer size systemd-stub
-# passes and grows the device tree in place, see
-# https://github.com/U-Boot-EFI/EFI_DT_FIXUP_PROTOCOL. Without free space in
-# the blob it overwrites whatever follows, which can be the kernel command line.
-RUN dtc -I dtb -O dtb -p 65536 \
-    -o /dtb/monaco-arduino-monza.dtb /dtb/monaco-arduino-monza.dtb
-
-
 # `just build` passes rootfs rechunked by chunkah as the chunked build context.
 # Seal the UKI from chunked so that its composefs digest covers the mtimes
 # chunkah rewrites.
 FROM chunked AS uki
 
-# Replaces the firmware's device tree, which targets Canonical's linux-qcom kernel.
+# The UKI carries no device tree. The firmware loads it from the dtb partition.
 RUN --mount=type=bind,from=chunked,target=/target \
     --mount=type=bind,from=finalized,source=/usr/lib/modules,target=/kernel \
-    --mount=type=bind,from=dtb,source=/dtb,target=/dtb \
     kver="$(basename "$(dirname /kernel/*/vmlinuz)")" && \
     mkdir /uki && \
     bootc container ukify --rootfs /target --kernel-dir "/kernel/${kver}" \
-    -- \
-    --devicetree /dtb/monaco-arduino-monza.dtb \
-    --output "/uki/${kver}.efi"
+    -- --output "/uki/${kver}.efi"
 
 
 FROM chunked
@@ -202,4 +207,4 @@ LABEL org.opencontainers.image.source="https://github.com/yeetypete/bootc-ventun
     org.opencontainers.image.revision="${REVISION}" \
     org.opencontainers.image.licenses="MIT" \
     org.opencontainers.image.title="bootc-ventuno" \
-    org.opencontainers.image.description="bootc image for the Arduino VENTUNO Q on Ubuntu 26.10."
+    org.opencontainers.image.description="bootc image for the Arduino VENTUNO Q on Ubuntu 24.04."

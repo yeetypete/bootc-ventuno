@@ -15,16 +15,8 @@ out=$2
 repo=$(realpath "$(dirname "$0")/..")
 cache=$repo/build/cache
 
-dtb_metadata_rev=c2c5fdab4419a6717d2e40bbab228cb9ff8a1620
 ptool_rev=bae4bce2f09a56ba0a13743a21ab0e4b29c72b3e
-
-# Clone a qualcomm-linux repository at a commit into the cache.
-fetch_repo() {
-    local dir="$cache/$1-$2"
-    [ -d "$dir" ] || git clone --quiet --depth 1 --revision "$2" \
-        "https://github.com/qualcomm-linux/$1.git" "$dir"
-    echo "$dir"
-}
+ptool=$cache/qcom-ptool-$ptool_rev
 
 mkdir -p "$cache"
 rm -rf "$out"
@@ -47,16 +39,8 @@ partx --show --noheadings --output NAME,START,SECTORS "$disk" |
             skip=$((start * 512)) count=$((sectors * 512))
     done
 
-# Give the firmware the device tree the UKI boots with.
-dtb_dir=$(mktemp -d)
-trap 'rm -rf "$dtb_dir"' EXIT
-mcopy -i "$out/efi.bin" '::/EFI/Linux/bootc/*.efi' - |
-    llvm-objcopy --dump-section .dtb="$dtb_dir/monaco-arduino-monza.dtb" - /dev/null
-
-dtb_metadata=$(fetch_repo qcom-dtb-metadata "$dtb_metadata_rev")
-"$dtb_metadata/build-dtb-image.sh" --dtb-src "$dtb_dir" --soc qcs8275 --prune --out "$out/dtb.bin" >/dev/null
-
-ptool=$(fetch_repo qcom-ptool "$ptool_rev")
+[ -d "$ptool" ] || git clone --quiet --depth 1 --revision "$ptool_rev" \
+    https://github.com/qualcomm-linux/qcom-ptool.git "$ptool"
 # bootc gives the composefs backend a 2 GiB ESP.
 sed 's/--name=efi --size=524288KB/--name=efi --size=2097152KB/' \
     "$ptool/platforms/qcs8275-monza/emmc/partitions.conf" >"$out/partitions.conf"

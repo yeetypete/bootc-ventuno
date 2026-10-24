@@ -3,7 +3,7 @@
 # Image repository for the built images.
 repository := "docker.io/yeetypete/bootc-ventuno"
 # The rolling tag installed systems follow with `bootc upgrade`.
-tag := "26.10"
+tag := "24.04"
 reference := repository + ":" + tag
 # Local image of the rootfs stage, which chunkah rechunks.
 rootfs := "localhost/bootc-ventuno-rootfs"
