@@ -106,6 +106,7 @@ COPY --from=system-files /system_files/etc/apt/sources.list.d/ /etc/apt/sources.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install --no-install-recommends -y \
+    alsa-conf-qcom \
     avahi-daemon \
     dbus \
     dosfstools \
