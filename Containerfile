@@ -103,22 +103,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 COPY --from=system-files /system_files/etc/apt/sources.list.d/ /etc/apt/sources.list.d/
 
-# The kernel Arduino's image ships, which built the device tree in firmware/dtb.bin.
-ARG KERNEL_RELEASE=6.8.0-1080-qcom
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install --no-install-recommends -y \
-    acl \
     avahi-daemon \
     dbus \
     dosfstools \
-    dracut \
+    dracut-core \
+    dragonwing-defaults \
     fdisk \
     libnss-mdns \
     libnss-systemd \
-    linux-firmware \
-    linux-firmware-dragonwing \
-    linux-image-${KERNEL_RELEASE} \
+    linux-image-qcom \
     openssh-server \
     podman \
     qcom-fastrpc1 \
@@ -146,7 +142,8 @@ RUN cp /usr/share/systemd/tmp.mount /usr/lib/systemd/system/
 
 RUN systemctl enable \
     systemd-growfs@sysroot.service \
-    tmp.mount && \
+    tmp.mount \
+    update-dtb.service && \
     systemctl disable \
     apt-daily-upgrade.timer \
     apt-daily.timer

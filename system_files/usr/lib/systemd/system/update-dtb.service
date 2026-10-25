@@ -1,0 +1,14 @@
+# Copy the booted kernel's device tree to dtb_a with dragonwing-defaults'
+# kernel hook, once per kernel. It takes effect on the next boot.
+[Unit]
+Description=Copy the booted kernel's device tree to dtb_a
+ConditionPathExists=!/var/lib/update-dtb/%v
+
+[Service]
+Type=oneshot
+StateDirectory=update-dtb
+ExecStart=/etc/kernel/postinst.d/zzz-update-dtb %v
+ExecStartPost=/bin/sh -c 'rm -f /var/lib/update-dtb/* && touch /var/lib/update-dtb/%v'
+
+[Install]
+WantedBy=multi-user.target
