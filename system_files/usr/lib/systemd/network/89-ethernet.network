@@ -5,4 +5,6 @@ Type=ether
 
 [Network]
 DHCP=yes
-MulticastDNS=yes
+
+[DHCPv4]
+UseHostname=no

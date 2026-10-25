@@ -2,7 +2,7 @@
 # DL3006: chunked is a build context, not an image to tag.
 # DL4006: podman builds OCI images, which ignore SHELL, so RUN keeps /bin/sh.
 
-ARG UBUNTU_IMAGE=docker.io/library/ubuntu:26.10@sha256:93e29beff5257b2cdf1c024d831f6d2997e53655a653ff76a811fc9e6564a719
+ARG UBUNTU_IMAGE=docker.io/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
 ARG RUST_IMAGE=docker.io/library/rust:1.99-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6
 ARG BOOTC_IMAGECTL_REV=a2ef68fc68e8d272f16e502abd432f071ce350d5
 
@@ -15,31 +15,64 @@ RUN chmod -R go-w /system_files
 
 FROM ${UBUNTU_IMAGE} AS bootc-builder
 
+ENV PATH=/usr/lib/rust-1.91/bin:$PATH
+
 ARG BOOTC_VERSION=v1.17.1
-ENV DEBIAN_FRONTEND=noninteractive
+ARG OSTREE_VERSION=v2026.4
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install --no-install-recommends -y \
+    autoconf \
+    automake \
+    bison \
     build-essential \
     ca-certificates \
-    cargo \
+    cargo-1.91 \
     git \
     go-md2man \
-    libostree-dev \
+    libext2fs-dev \
+    libglib2.0-dev \
+    liblzma-dev \
     libssl-dev \
+    libsystemd-dev \
+    libtool \
     libzstd-dev \
-    pkg-config \
-    rustc
+    pkg-config
+
+# bootc requires ostree >= 2025.3 but Ubuntu 24.04 ships 2024.5, so build from source.
+WORKDIR /ostree
+RUN git clone \
+    --depth 1 \
+    --branch ${OSTREE_VERSION} \
+    --recurse-submodules \
+    --shallow-submodules \
+    --jobs 8 \
+    https://github.com/ostreedev/ostree.git . && \
+    env NOCONFIGURE=1 ./autogen.sh && \
+    ./configure \
+    --prefix=/usr \
+    --libdir=/usr/lib \
+    --sysconfdir=/etc \
+    --without-gpgme \
+    --with-libsystemd \
+    --disable-rofiles-fuse && \
+    make -j"$(nproc)" && \
+    make install && \
+    make install-libLTLIBRARIES install-binPROGRAMS DESTDIR=/out && \
+    ldconfig
 
 WORKDIR /bootc
 RUN git clone --depth 1 --branch "${BOOTC_VERSION}" https://github.com/bootc-dev/bootc.git .
 
+# The rhel9 feature selects composefs-rs loopback EROFS mounts, which work on
+# the VENTUNO Q's 6.8 kernel (file-backed EROFS needs Linux 6.12+). Ubuntu does
+# not use SELinux, so leave out the default selinux feature.
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,target=/bootc/target,sharing=locked \
     CARGO_PROFILE_RELEASE_DEBUG=false CARGO_PROFILE_RELEASE_STRIP=true \
     make bin install DESTDIR=/out \
-    CARGO_OPTIONS='--no-default-features --features install-to-disk'
+    CARGO_OPTIONS='--no-default-features --features "install-to-disk rhel9"'
 
 
 FROM ${RUST_IMAGE} AS bootc-imagectl
@@ -63,24 +96,31 @@ ENV INITRD=No
 COPY --from=system-files /system_files/usr/lib/sysusers.d/ /usr/lib/sysusers.d/
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install --no-install-recommends -y systemd && \
+    apt-get update && apt-get install --no-install-recommends -y \
+    ca-certificates \
+    systemd && \
     systemd-sysusers
+
+COPY --from=system-files /system_files/etc/apt/sources.list.d/ /etc/apt/sources.list.d/
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install --no-install-recommends -y \
-    ca-certificates \
+    alsa-conf-qcom \
+    avahi-daemon \
     dbus \
     dosfstools \
-    dracut \
+    dracut-core \
+    dragonwing-defaults \
     fdisk \
+    libnss-mdns \
     libnss-systemd \
-    linux-image-generic \
+    linux-image-qcom \
     openssh-server \
-    ostree \
     podman \
+    qcom-fastrpc1 \
     skopeo \
-    sudo-rs \
+    sudo \
     systemd-boot \
     systemd-resolved \
     systemd-sysv \
@@ -89,11 +129,25 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     udev \
     zstd
 
+# bootc links against the ostree built alongside it.
 COPY --from=bootc-builder /out/usr/ /usr/
+RUN ldconfig
 
 COPY --from=system-files /system_files/ /
 
-RUN systemctl enable systemd-growfs@sysroot.service
+# The *rpcd services link the SoC's DSP libraries into /usr/lib/dsp when they
+# start, so point it at /run, which tmpfiles.d creates.
+RUN ln -s /run/dsp /usr/lib/dsp
+
+RUN cp /usr/share/systemd/tmp.mount /usr/lib/systemd/system/
+
+RUN systemctl enable \
+    systemd-growfs@sysroot.service \
+    tmp.mount \
+    update-dtb.service && \
+    systemctl disable \
+    apt-daily-upgrade.timer \
+    apt-daily.timer
 
 # A transient /etc requires setting systemd-firstboot's settings in the image.
 RUN systemd-firstboot --locale=C.UTF-8 --timezone=UTC
@@ -101,8 +155,10 @@ RUN systemd-firstboot --locale=C.UTF-8 --timezone=UTC
 # Create home directories on first login.
 RUN pam-auth-update --enable mkhomedir
 
-# The base image's ubuntu user, with password ubuntu.
-RUN echo 'ubuntu:ubuntu' | chpasswd
+# The base image's ubuntu user, with password ubuntu and passwordless sudo.
+RUN echo 'ubuntu:ubuntu' | chpasswd && \
+    echo "ubuntu ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/ubuntu && \
+    chmod 440 /etc/sudoers.d/ubuntu
 
 LABEL containers.bootc=1
 CMD ["/sbin/init"]
@@ -133,15 +189,14 @@ RUN bootc container lint --fatal-warnings
 # chunkah rewrites.
 FROM chunked AS uki
 
-# Replaces the firmware's device tree, which targets Canonical's linux-qcom kernel.
+# The kernel and initramfs come from finalized, the systemd-stub from chunked.
+# The UKI carries no devicetree. The firmware loads it from the dtb partition.
 RUN --mount=type=bind,from=chunked,target=/target \
     --mount=type=bind,from=finalized,source=/usr/lib/modules,target=/kernel \
     kver="$(basename "$(dirname /kernel/*/vmlinuz)")" && \
     mkdir /uki && \
     bootc container ukify --rootfs /target --kernel-dir "/kernel/${kver}" \
-    -- \
-    --devicetree "/target/usr/lib/firmware/${kver}/device-tree/qcom/monaco-arduino-monza.dtb" \
-    --output "/uki/${kver}.efi"
+    -- --output "/uki/${kver}.efi"
 
 
 FROM chunked
@@ -155,4 +210,4 @@ LABEL org.opencontainers.image.source="https://github.com/yeetypete/bootc-ventun
     org.opencontainers.image.revision="${REVISION}" \
     org.opencontainers.image.licenses="MIT" \
     org.opencontainers.image.title="bootc-ventuno" \
-    org.opencontainers.image.description="bootc image for the Arduino VENTUNO Q on Ubuntu 26.10."
+    org.opencontainers.image.description="bootc image for the Arduino VENTUNO Q on Ubuntu 24.04."

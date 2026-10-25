@@ -1,0 +1,2 @@
+# From Arduino's /etc/default/grub.d/99-dragonwing-defaults.cfg.
+kargs = ["console=ttyMSM0,115200n8", "pcie_pme=nomsi", "earlycon"]
