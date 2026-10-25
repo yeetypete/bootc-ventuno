@@ -2,7 +2,7 @@
 
 A [bootc](https://bootc-dev.github.io/bootc/) image for the
 [Arduino VENTUNO Q](https://docs.arduino.cc/hardware/ventuno-q/), running
-Ubuntu 24.04 with the kernel, firmware and device tree of Arduino's own image.
+Ubuntu 24.04.
 
 > [!WARNING]
 > This repository is intended as a **reference example** of running `bootc` on
